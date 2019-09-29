@@ -19,7 +19,7 @@ class QNetwork():
         model = keras.models.Sequential([
         keras.layers.Dense(30, input_dim=num_states, activation='relu'),
         keras.layers.Dense(50, activation='relu'),
-        keras.layers.Dense(num_actions, activation='relu')]) 
+        keras.layers.Dense(num_actions, activation='linear')]) 
         model.compile(loss=keras.losses.mean_squared_error,
                      optimizer=tf.train.AdamOptimizer(),
                      metrics=['accuracy'])
