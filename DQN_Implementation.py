@@ -114,7 +114,7 @@ class DQN_Agent():
         self.q_net = QNetwork(environment_name)
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
-        self.num_episodes = 100
+        self.num_episodes = 1000
         self.num_epoch = 5
         #self.learning_rate = 0.05
         self.discount_factor = 0.9
