@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import keras, tensorflow as tf, numpy as npy, gym, sys, copy, argparse
+import keras, tensorflow as tf, numpy as np, gym, sys, copy, argparse
 
 class QNetwork():
 
@@ -11,9 +11,6 @@ class QNetwork():
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
         self.env = gym.make(environment_name)
-        self.env.reset()
-        # print("Observation space",self.env.observation_space)
-        # print("Action",self.env.action_space)
         self.model = self.make_model()   
 
     def make_model(self):
@@ -45,12 +42,15 @@ class QNetwork():
     def load_model_weights(self,weight_file):
         # Helper funciton to load model weights. 
         # e.g.: self.model.load_state_dict(torch.load(model_file))
-        loaded_model.load_weights(weight_file)
+        sel.model.load_weights(weight_file)
         print("Loaded model")
+
+def transform_state(state,size):
+    return np.reshape(state, [1, size])
 
 class Replay_Memory():
 
-    def __init__(self, env,policy,memory_size=50000, burn_in=10000):
+    def __init__(self, env,policy,memory_size=50000, burn_in=40):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -62,21 +62,22 @@ class Replay_Memory():
         # Hint: you might find this useful:
         #         collections.deque(maxlen=memory_size)
         self.max_mem = memory_size
-        self.mem = generate_burn_in_memory(burn_in,env,policy)
-
-    def transform_state(state,size):
-        return npy.reshape(state, [1, size])
+        self.mem = np.empty(shape=[0, 5])       #The 5 corresponds to state,action,reward,new_state and done
+        #self.generate_burn_in_memory(burn_in,env,policy)
 
     def generate_burn_in_memory(self,burn_in,env,policy):
         state = env.reset()
-        state = transform_state(state,self.env.observation_space.shape[0])
+        state = transform_state(state,env.observation_space.shape[0])
         for i in range(burn_in):
-            action = np.argmax(model.predict(state), axis=1)[0]
+            action = np.argmax(policy.predict(state), axis=1)[0]
             new_state, reward, done, info = env.step(action)
-            new_state = transform_state(new_state)
+            new_state = transform_state(new_state,env.observation_space.shape[0])
             transition = np.array([state,action,reward,new_state,done])
             self.append(transition)
-            state = new_state
+            if(done):
+                state = transform_state(env.reset(),env.observation_space.shape[0])
+            else:
+                state = new_state
 
     def sample_batch(self, batch_size=32):
         # This function returns a batch of randomly sampled transitions - i.e. state, action, reward, next state, terminal flag tuples. 
@@ -85,7 +86,8 @@ class Replay_Memory():
         
     def append(self, transition):
         # Appends transition to the memory.     
-        if(self.mem.shape[0]==0):
+        if(self.mem is None):
+            print("Initializing memory")
             self.mem = transition
         elif(self.mem.shape[0]<self.max_mem):
             self.mem = np.vstack((self.mem,transition))
@@ -109,15 +111,30 @@ class DQN_Agent():
         # Here is also a good place to set environmental parameters,
         # as well as training parameters - number of episodes / iterations, etc. 
         self.env = gym.make(environment_name)
-        self.env.reset()
+        self.q_net = QNetwork(environment_name)
+        self.replay_mem = Replay_Memory(self.env,self.q_net.model)
+        self.burn_in_memory()
+        self.num_episodes = 100
+        self.num_epoch = 5
+        #self.learning_rate = 0.05
+        self.discount_factor = 0.9
+        self.epsilon = 0.5
+        self.train_frequency = 1
+        self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
+        self.evaluate_curr_policy_frequency = 10
+        self.num_episodes_to_evaluate_curr_policy = 20
 
     def epsilon_greedy_policy(self, q_values):
-        # Creating epsilon greedy probabilities to sample from.             
-        pass
+        # Creating epsilon greedy probabilities to sample from.  
+        random_number = np.random.rand()
+        if(random_number<self.epsilon):
+            return self.env.action_space.sample()
+        else:
+            return np.argmax(q_values,axis=1)[0]
 
     def greedy_policy(self, q_values):
         # Creating greedy policy for test time. 
-        pass 
+        return np.argmax(q_values,axis=1)[0]
 
     def train(self):
         # In this function, we will train our network. 
@@ -126,16 +143,64 @@ class DQN_Agent():
 
         # When use replay memory, you should interact with environment here, and store these 
         # transitions to memory, while also updating your model.
-        pass
+        for episode in range(self.num_episodes):
+            # print("Training episode: ",episode)
+            done = False
+            state = self.env.reset()
+            state = transform_state(state,self.env.observation_space.shape[0])
+            while (not done):
+                action = self.epsilon_greedy_policy(self.q_net.model.predict(state))
+                new_state, reward, done, info = self.env.step(action)
+                new_state = transform_state(new_state,self.env.observation_space.shape[0])
+                transition = np.array([state,action,reward,new_state,done])
+                self.replay_mem.append(transition)
+            if(episode%self.train_frequency==0):
+                # print("Training sample batch")
+                self.train_batch()
+            if((episode+1)%self.evaluate_curr_policy_frequency==0):
+                print("Evaluating current policy", episode+1)
+                print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model))
+        self.q_net.save_model_weights("cart_pole_weights") #Change name/pass as argument
+
+    def train_batch(self):
+        data = self.replay_mem.sample_batch()
+        for i in range(data.shape[0]):
+            if(data[i][4]):
+                target = data[i][2]
+            else:
+                target = data[i][2] + self.discount_factor*np.max(self.q_net.model.predict(data[i][3]), axis=1)[0]
+
+            #Change the target for only the action's q value. This way only that get's updated
+            present_output = self.q_net.model.predict(data[i][0])
+            present_output[0][data[i][1]] = target
+            self.q_net.model.fit(data[i][0],present_output,self.num_epoch,verbose=0)
 
     def test(self, model_file=None):
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
         # Here you need to interact with the environment, irrespective of whether you are using a memory. 
-        pass
+        self.q_net.load_model_weights(model_file)
+        return test_present_policy(self.env,self.num_test_episodes,self.q_net.model)
 
-    def burn_in_memory():
+    def burn_in_memory(self):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
-        pass
+        burn_in = 40
+        self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
+
+def test_present_policy(env,num_episodes,policy):
+    net_average_reward = 0
+    for episode in range(num_episodes):
+        done = False
+        state = env.reset()
+        state = transform_state(state,env.observation_space.shape[0])
+        present_reward = 0
+        while (not done):
+            action = np.argmax(policy.predict(state), axis=1)[0]
+            new_state, reward, done, info = env.step(action)
+            new_state = transform_state(new_state,env.observation_space.shape[0])
+            state = new_state
+            present_reward = present_reward + reward
+        net_average_reward = net_average_reward + present_reward
+    return net_average_reward/num_episodes
 
 # Note: if you have problems creating video captures on servers without GUI,
 #       you could save and relaod model to create videos on your laptop. 
@@ -183,13 +248,8 @@ def main(args):
 
     # Setting this as the default tensorflow session. 
     keras.backend.tensorflow_backend.set_session(sess)
-    q = QNetwork(environment_name)     #edit it for environment_name
-    state = q.env.reset()
-    state = npy.reshape(state, [1, 4])
-    print("Hello")
-    print(state.shape)
-    print(type(state))
-    print(q.model.predict(state))
+    agent = DQN_Agent(environment_name) 
+    agent.train() 
 
     # You want to create an instance of the DQN_Agent class here, and then train / test it. 
 
