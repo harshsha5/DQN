@@ -10,6 +10,7 @@ class QNetwork():
     def __init__(self, environment_name):
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
+        self.lr = 0.0001
         self.env = gym.make(environment_name)
         self.model = self.make_model()   
 
@@ -17,11 +18,11 @@ class QNetwork():
         num_states = self.env.observation_space.shape[0]
         num_actions = self.env.action_space.n
         model = keras.models.Sequential([
-        keras.layers.Dense(30, input_dim=num_states, activation='relu'),
-        keras.layers.Dense(50, activation='relu'),
+        keras.layers.Dense(24, input_dim=num_states, activation='relu'),
+        keras.layers.Dense(30, activation='relu'),
         keras.layers.Dense(num_actions, activation='linear')]) 
         model.compile(loss=keras.losses.mean_squared_error,
-                     optimizer=tf.train.AdamOptimizer(),
+                     optimizer=tf.train.AdamOptimizer(learning_rate=self.lr),
                      metrics=['accuracy'])
         return model
 
@@ -50,7 +51,7 @@ def transform_state(state,size):
 
 class Replay_Memory():
 
-    def __init__(self, env,policy,memory_size=50000, burn_in=40):
+    def __init__(self, env,policy,memory_size=50000, burn_in=1000):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -114,11 +115,13 @@ class DQN_Agent():
         self.q_net = QNetwork(environment_name)
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
-        self.num_episodes = 1000
-        self.num_epoch = 5
+        self.num_episodes = 3000
+        self.num_epoch = 1
         #self.learning_rate = 0.05
-        self.discount_factor = 0.9
-        self.epsilon = 0.5
+        self.discount_factor = 0.99
+        self.epsilon = 0.7
+        self.epsilon_min = 0.05
+        self.epsilon_decay = 0.999
         self.train_frequency = 1
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
         self.evaluate_curr_policy_frequency = 10
@@ -127,7 +130,7 @@ class DQN_Agent():
     def epsilon_greedy_policy(self, q_values):
         # Creating epsilon greedy probabilities to sample from.  
         random_number = np.random.rand()
-        if(random_number<self.epsilon):
+        if(random_number<=self.epsilon):
             return self.env.action_space.sample()
         else:
             return np.argmax(q_values,axis=1)[0]
@@ -159,16 +162,16 @@ class DQN_Agent():
                 self.train_batch()
             if((episode+1)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
-                print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model))
+                print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor))
+            # print("Epsilon is ",self.epsilon)
+            if(self.epsilon>self.epsilon_min):
+                self.epsilon*=self.epsilon_decay
         self.q_net.save_model_weights("cart_pole_weights") #Change name/pass as argument
 
     def train_batch(self):
         data = self.replay_mem.sample_batch()
         for i in range(data.shape[0]):
-            if(data[i][4]):
-                target = data[i][2]
-            else:
-                target = data[i][2] + self.discount_factor*np.max(self.q_net.model.predict(data[i][3]), axis=1)[0]
+            target = get_target_value(data[i][2],data[i][4],data[i][3],self.q_net.model,self.discount_factor)
 
             #Change the target for only the action's q value. This way only that get's updated
             present_output = self.q_net.model.predict(data[i][0])
@@ -179,28 +182,42 @@ class DQN_Agent():
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
         # Here you need to interact with the environment, irrespective of whether you are using a memory. 
         self.q_net.load_model_weights(model_file)
-        return test_present_policy(self.env,self.num_test_episodes,self.q_net.model)
+        return test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor)
 
     def burn_in_memory(self):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
-        burn_in = 40
+        burn_in = 1000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
-def test_present_policy(env,num_episodes,policy):
+def test_present_policy(env,num_episodes,policy,discount_factor):
     net_average_reward = 0
+    net_avg_td_error_per_episode = 0
     for episode in range(num_episodes):
         done = False
         state = env.reset()
         state = transform_state(state,env.observation_space.shape[0])
         present_reward = 0
+        num_steps = 0
+        present_td_error = 0
         while (not done):
             action = np.argmax(policy.predict(state), axis=1)[0]
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
+            present_td_error = present_td_error + abs(np.max(policy.predict(state), axis=1)[0] - get_target_value(reward,done,new_state,policy,discount_factor))
             state = new_state
             present_reward = present_reward + reward
+            num_steps+=1
+        net_avg_td_error_per_episode = net_avg_td_error_per_episode + (present_td_error/num_steps)
         net_average_reward = net_average_reward + present_reward
+    print("Average TD Error for:,",num_episodes," episodes ",net_avg_td_error_per_episode/num_episodes)
     return net_average_reward/num_episodes
+
+def get_target_value(reward,done,new_state,policy,discount_factor):
+    if(done):
+        return reward
+    else:
+        return reward + discount_factor*np.max(policy.predict(new_state), axis=1)[0]
+
 
 # Note: if you have problems creating video captures on servers without GUI,
 #       you could save and relaod model to create videos on your laptop. 
