@@ -51,7 +51,7 @@ def transform_state(state,size):
 
 class Replay_Memory():
 
-    def __init__(self, env,policy,memory_size=50000, burn_in=1000):
+    def __init__(self, env,policy,memory_size=50000, burn_in=10000):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -114,6 +114,7 @@ class DQN_Agent():
         # as well as training parameters - number of episodes / iterations, etc. 
         self.env = gym.make(environment_name)
         self.q_net = QNetwork(environment_name)
+        self.copy_q_net = copy.deepcopy(self.q_net)
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
         self.num_episodes = 3000
@@ -122,11 +123,12 @@ class DQN_Agent():
         self.discount_factor = 0.99
         self.epsilon = 0.7
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.9995
+        self.epsilon_decay = 0.9999
         self.train_frequency = 1
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
         self.evaluate_curr_policy_frequency = 10
         self.num_episodes_to_evaluate_curr_policy = 20
+        self.target_policy_update_frequency = 20
 
     def epsilon_greedy_policy(self, q_values):
         # Creating epsilon greedy probabilities to sample from.  
@@ -163,16 +165,20 @@ class DQN_Agent():
                 self.train_batch()
             if((episode+1)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
-                print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor))
+                print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model))
             # print("Epsilon is ",self.epsilon)
             if(self.epsilon>self.epsilon_min):
                 self.epsilon*=self.epsilon_decay
+            if((episode+1)%self.target_policy_update_frequency==0):
+                self.copy_q_net = copy.deepcopy(self.q_net)
+                print("Updated target policy")
+
         self.q_net.save_model_weights("cart_pole_weights") #Change name/pass as argument
 
     def train_batch(self):
         data = self.replay_mem.sample_batch()
         for i in range(data.shape[0]):
-            target = get_target_value(data[i][2],data[i][4],data[i][3],self.q_net.model,self.discount_factor)
+            target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
 
             #Change the target for only the action's q value. This way only that get's updated
             present_output = self.q_net.model.predict(data[i][0])
@@ -187,10 +193,10 @@ class DQN_Agent():
 
     def burn_in_memory(self):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
-        burn_in = 1000
+        burn_in = 5000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
-def test_present_policy(env,num_episodes,policy,discount_factor):
+def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy):
     net_average_reward = 0
     net_avg_td_error_per_episode = 0
     for episode in range(num_episodes):
@@ -204,7 +210,7 @@ def test_present_policy(env,num_episodes,policy,discount_factor):
             action = np.argmax(policy.predict(state), axis=1)[0]
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
-            present_td_error = present_td_error + abs(np.max(policy.predict(state), axis=1)[0] - get_target_value(reward,done,new_state,policy,discount_factor))
+            present_td_error = present_td_error + abs(np.max(policy.predict(state), axis=1)[0] - get_target_value(reward,done,new_state,copy_policy,discount_factor))
             state = new_state
             present_reward = present_reward + reward
             num_steps+=1
