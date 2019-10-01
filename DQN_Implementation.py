@@ -70,7 +70,8 @@ class Replay_Memory():
         state = env.reset()
         state = transform_state(state,env.observation_space.shape[0])
         for i in range(burn_in):
-            action = np.argmax(policy.predict(state), axis=1)[0]
+            #action = np.argmax(policy.predict(state), axis=1)[0]
+            action = env.action_space.sample()
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
             transition = np.array([state,action,reward,new_state,done])
@@ -121,7 +122,7 @@ class DQN_Agent():
         self.discount_factor = 0.99
         self.epsilon = 0.7
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.999
+        self.epsilon_decay = 0.9995
         self.train_frequency = 1
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
         self.evaluate_curr_policy_frequency = 10
@@ -267,6 +268,7 @@ def main(args):
     keras.backend.tensorflow_backend.set_session(sess)
     agent = DQN_Agent(environment_name) 
     agent.train() 
+    print("Final epsilon: ",agent.epsilon)
 
     # You want to create an instance of the DQN_Agent class here, and then train / test it. 
 
