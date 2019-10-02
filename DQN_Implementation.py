@@ -136,7 +136,7 @@ class DQN_Agent():
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
         self.evaluate_curr_policy_frequency = 100
         self.num_episodes_to_evaluate_curr_policy = 20
-        self.target_policy_update_frequency = 20
+        self.target_policy_update_frequency = 50
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
@@ -161,23 +161,30 @@ class DQN_Agent():
 
         # When use replay memory, you should interact with environment here, and store these 
         # transitions to memory, while also updating your model.
+        step_C = 0
         for episode in range(self.num_episodes):
             # print("Training episode: ",episode)
             done = False
             state = self.env.reset()
             state = transform_state(state,self.env.observation_space.shape[0])
             while (not done):
+                step_C+=1
                 action = self.epsilon_greedy_policy(self.q_net.model.predict(state))
-
                 new_state, reward, done, info = self.env.step(action)
                 new_state = transform_state(new_state,self.env.observation_space.shape[0])
                 transition = np.array([state,action,reward,new_state,done])
                 self.replay_mem.append(transition)
                 state = new_state
-            if(episode%self.train_frequency==0):
-                # print("Training sample batch")
-                self.train_batch(episode)
-            if((episode+1)%self.evaluate_curr_policy_frequency==0):
+                if(step_C%self.train_frequency==0):
+                    # print("Training sample batch")
+                    self.train_batch(step_C)
+                # print("Epsilon is ",self.epsilon)
+                if((step_C+1)%100==0 and self.epsilon>self.epsilon_min):
+                    self.epsilon*=self.epsilon_decay
+                if(step_C%self.target_policy_update_frequency==0):
+                    self.copy_q_net = copy.deepcopy(self.q_net)
+                    print("Updated target policy")
+            if((episode)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
                 present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
@@ -186,12 +193,6 @@ class DQN_Agent():
                 self.reward_list.append(present_average_reward)
                 self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
                 self.td_error_list.append(average_td_loss)
-            # print("Epsilon is ",self.epsilon)
-            if(self.epsilon>self.epsilon_min):
-                self.epsilon*=self.epsilon_decay
-            if((episode+1)%self.target_policy_update_frequency==0):
-                self.copy_q_net = copy.deepcopy(self.q_net)
-                print("Updated target policy")
 
         self.q_net.save_model_weights(environment_name+"-weights") #Change name/pass as argument
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
