@@ -6,6 +6,10 @@ from tensorboardX import SummaryWriter
 
 test_step = 0
 
+from tensorboardX import SummaryWriter
+
+test_step = 0
+
 class QNetwork():
 
     # This class essentially defines the network architecture. 
@@ -136,9 +140,12 @@ class DQN_Agent():
         self.evaluate_curr_policy_frequency = 10
         self.num_episodes_to_evaluate_curr_policy = 20
         self.target_policy_update_frequency = 20
+<<<<<<< HEAD
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
+=======
+>>>>>>> d7f434d63920f121abe8a4864e075c444b184edf
         self.writer = SummaryWriter()
 
     def epsilon_greedy_policy(self, q_values):
@@ -176,11 +183,15 @@ class DQN_Agent():
                 self.train_batch(episode)
             if((episode+1)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
+<<<<<<< HEAD
                 present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
                 self.reward_list.append(present_average_reward)
                 self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
                 self.td_error_list.append(average_td_loss)
+=======
+                print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer))
+>>>>>>> d7f434d63920f121abe8a4864e075c444b184edf
             # print("Epsilon is ",self.epsilon)
             if(self.epsilon>self.epsilon_min):
                 self.epsilon*=self.epsilon_decay
@@ -189,8 +200,11 @@ class DQN_Agent():
                 print("Updated target policy")
 
         self.q_net.save_model_weights(environment_name+"-weights") #Change name/pass as argument
+<<<<<<< HEAD
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
         plot_graph(self.reward_episode_nums,self.td_error_list,"td_error")
+=======
+>>>>>>> d7f434d63920f121abe8a4864e075c444b184edf
 
     def train_batch(self, step):
         data = self.replay_mem.sample_batch()
@@ -245,11 +259,18 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
         net_avg_td_error_per_episode = net_avg_td_error_per_episode + (present_td_error/num_steps)
         net_average_reward = net_average_reward + present_reward
     print("Average TD Error for:,",num_episodes," episodes ",net_avg_td_error_per_episode/num_episodes)
+<<<<<<< HEAD
     
     if(not writer == None):
         writer.add_scalar("test/td-error", net_avg_td_error_per_episode/num_episodes, test_step)
         writer.add_scalar("test/reward", net_average_reward/num_episodes, test_step)
     return ((net_average_reward/num_episodes),(net_avg_td_error_per_episode/num_episodes))
+=======
+    if(not writer == None):
+        writer.add_scalar("test/td-error", net_avg_td_error_per_episode/num_episodes, test_step)
+        writer.add_scalar("test/reward", net_average_reward/num_episodes, test_step)
+    return net_average_reward/num_episodes
+>>>>>>> d7f434d63920f121abe8a4864e075c444b184edf
 
 def get_target_value(reward,done,new_state,policy,discount_factor):
     if(done):
