@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import keras, tensorflow as tf, numpy as np, gym, sys, copy, argparse
+import matplotlib.pyplot as plt 
 
 class QNetwork():
 
@@ -18,8 +19,9 @@ class QNetwork():
         num_states = self.env.observation_space.shape[0]
         num_actions = self.env.action_space.n
         model = keras.models.Sequential([
-        keras.layers.Dense(24, input_dim=num_states, activation='relu'),
-        keras.layers.Dense(30, activation='relu'),
+        keras.layers.Dense(128, input_dim=num_states, activation='relu'),
+        keras.layers.Dense(128, activation='relu'),
+        keras.layers.Dense(128, activation='relu'),
         keras.layers.Dense(num_actions, activation='linear')]) 
         model.compile(loss=keras.losses.mean_squared_error,
                      optimizer=tf.train.AdamOptimizer(learning_rate=self.lr),
@@ -51,7 +53,7 @@ def transform_state(state,size):
 
 class Replay_Memory():
 
-    def __init__(self, env,policy,memory_size=50000, burn_in=10000):
+    def __init__(self, env,policy,memory_size=60000, burn_in=10000):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -93,8 +95,8 @@ class Replay_Memory():
             self.mem = transition
         elif(self.mem.shape[0]<self.max_mem):
             self.mem = np.vstack((self.mem,transition))
-        else:
-            print("Memory full")
+        # else:
+        #     print("Memory full")
 
 class DQN_Agent():
 
@@ -117,18 +119,21 @@ class DQN_Agent():
         self.copy_q_net = copy.deepcopy(self.q_net)
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
-        self.num_episodes = 3000
+        self.num_episodes = 5000
         self.num_epoch = 1
         #self.learning_rate = 0.05
         self.discount_factor = 0.99
-        self.epsilon = 0.7
+        self.epsilon = 0.5
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.9999
+        self.epsilon_decay = 0.9995
         self.train_frequency = 1
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
         self.evaluate_curr_policy_frequency = 10
         self.num_episodes_to_evaluate_curr_policy = 20
         self.target_policy_update_frequency = 20
+        self.reward_list = []
+        self.reward_episode_nums = []
+        self.td_error_list = []
 
     def epsilon_greedy_policy(self, q_values):
         # Creating epsilon greedy probabilities to sample from.  
@@ -165,7 +170,11 @@ class DQN_Agent():
                 self.train_batch()
             if((episode+1)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
-                print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model))
+                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model)
+                print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
+                self.reward_list.append(present_average_reward)
+                self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
+                self.td_error_list.append(average_td_loss)
             # print("Epsilon is ",self.epsilon)
             if(self.epsilon>self.epsilon_min):
                 self.epsilon*=self.epsilon_decay
@@ -174,6 +183,9 @@ class DQN_Agent():
                 print("Updated target policy")
 
         self.q_net.save_model_weights("cart_pole_weights") #Change name/pass as argument
+        plot_graph(self.reward_episode_nums,self.reward_list,"reward")
+        plot_graph(self.reward_episode_nums,self.td_error_list,"td_error")
+
 
     def train_batch(self):
         data = self.replay_mem.sample_batch()
@@ -189,11 +201,12 @@ class DQN_Agent():
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
         # Here you need to interact with the environment, irrespective of whether you are using a memory. 
         self.q_net.load_model_weights(model_file)
-        return test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.q_net.model)  #VERIFY
+        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.q_net.model)  #VERIFY
+        return reward
 
     def burn_in_memory(self):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
-        burn_in = 5000
+        burn_in = 10000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
 def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy):
@@ -217,13 +230,25 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy):
         net_avg_td_error_per_episode = net_avg_td_error_per_episode + (present_td_error/num_steps)
         net_average_reward = net_average_reward + present_reward
     print("Average TD Error for:,",num_episodes," episodes ",net_avg_td_error_per_episode/num_episodes)
-    return net_average_reward/num_episodes
+    return ((net_average_reward/num_episodes),(net_avg_td_error_per_episode/num_episodes))
 
 def get_target_value(reward,done,new_state,policy,discount_factor):
     if(done):
         return reward
     else:
         return reward + discount_factor*np.max(policy.predict(new_state), axis=1)[0]
+
+def plot_graph(x,y,y_axis): 
+    plt.plot(x, y) 
+    plt.xlabel('iterations') 
+    if(y_axis=="td_error"):
+        plt.ylabel('Average TD error per episode per time_step')
+        plt.title('Average TD error VS No. of iterations') 
+    elif(y_axis=="reward"):
+         plt.ylabel('Average reward per episode')
+         plt.title('Average reward VS No. of iterations') 
+    plt.show() 
+
 
 
 # Note: if you have problems creating video captures on servers without GUI,
