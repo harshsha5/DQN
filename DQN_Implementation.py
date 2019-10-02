@@ -2,6 +2,10 @@
 import keras, tensorflow as tf, numpy as np, gym, sys, copy, argparse
 import matplotlib.pyplot as plt 
 
+from tensorboardX import SummaryWriter
+
+test_step = 0
+
 class QNetwork():
 
     # This class essentially defines the network architecture. 
@@ -134,6 +138,7 @@ class DQN_Agent():
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
+        self.writer = SummaryWriter()
 
     def epsilon_greedy_policy(self, q_values):
         # Creating epsilon greedy probabilities to sample from.  
@@ -167,10 +172,10 @@ class DQN_Agent():
                 self.replay_mem.append(transition)
             if(episode%self.train_frequency==0):
                 # print("Training sample batch")
-                self.train_batch()
+                self.train_batch(episode)
             if((episode+1)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
-                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model)
+                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
                 self.reward_list.append(present_average_reward)
                 self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
@@ -187,15 +192,23 @@ class DQN_Agent():
         plot_graph(self.reward_episode_nums,self.td_error_list,"td_error")
 
 
-    def train_batch(self):
+    def train_batch(self, step):
         data = self.replay_mem.sample_batch()
+        loss = 0
+        acc = 0
+
         for i in range(data.shape[0]):
             target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
 
             #Change the target for only the action's q value. This way only that get's updated
             present_output = self.q_net.model.predict(data[i][0])
             present_output[0][data[i][1]] = target
-            self.q_net.model.fit(data[i][0],present_output,self.num_epoch,verbose=0)
+            history = self.q_net.model.fit(data[i][0],present_output,self.num_epoch,verbose=0)
+            loss +=history.history['loss'][-1]
+            acc +=history.history['accuracy'][-1]
+        self.writer.add_scalar('train/loss', loss/i, step)
+        self.writer.add_scalar('train/accuracy', acc/i, step)
+
 
     def test(self, model_file=None):
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
@@ -209,7 +222,9 @@ class DQN_Agent():
         burn_in = 10000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
-def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy):
+def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writer=None):
+    global test_step
+    test_step += 1
     net_average_reward = 0
     net_avg_td_error_per_episode = 0
     for episode in range(num_episodes):
@@ -230,6 +245,10 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy):
         net_avg_td_error_per_episode = net_avg_td_error_per_episode + (present_td_error/num_steps)
         net_average_reward = net_average_reward + present_reward
     print("Average TD Error for:,",num_episodes," episodes ",net_avg_td_error_per_episode/num_episodes)
+    
+    if(not writer == None):
+        writer.add_scalar("test/td-error", net_avg_td_error_per_episode/num_episodes, test_step)
+        writer.add_scalar("test/reward", net_average_reward/num_episodes, test_step)
     return ((net_average_reward/num_episodes),(net_avg_td_error_per_episode/num_episodes))
 
 def get_target_value(reward,done,new_state,policy,discount_factor):
@@ -278,7 +297,7 @@ def plot_graph(x,y,y_axis):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Deep Q Network Argument Parser')
-    parser.add_argument('--env',dest='env',type=str)
+    parser.add_argument('--env',dest='env',type=str,default='CartPole-v0')
     parser.add_argument('--render',dest='render',type=int,default=0)
     parser.add_argument('--train',dest='train',type=int,default=1)
     parser.add_argument('--model',dest='model_file',type=str)
