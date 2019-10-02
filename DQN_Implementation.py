@@ -118,6 +118,7 @@ class DQN_Agent():
         # Create an instance of the network itself, as well as the memory. 
         # Here is also a good place to set environmental parameters,
         # as well as training parameters - number of episodes / iterations, etc. 
+        self.environment_name = environment_name
         self.env = gym.make(environment_name)
         self.q_net = QNetwork(environment_name)
         self.copy_q_net = copy.deepcopy(self.q_net)
@@ -187,10 +188,9 @@ class DQN_Agent():
                 self.copy_q_net = copy.deepcopy(self.q_net)
                 print("Updated target policy")
 
-        self.q_net.save_model_weights("cart_pole_weights") #Change name/pass as argument
+        self.q_net.save_model_weights(environment_name+"-weights") #Change name/pass as argument
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
         plot_graph(self.reward_episode_nums,self.td_error_list,"td_error")
-
 
     def train_batch(self, step):
         data = self.replay_mem.sample_batch()
@@ -319,7 +319,7 @@ def main(args):
     agent = DQN_Agent(environment_name) 
     agent.train() 
     print("Final epsilon: ",agent.epsilon)
-    net_avg_reward = agent.test("cart_pole_weights")
+    net_avg_reward = agent.test(environment_name+"-weights")
     print("Net average test reward is: ",net_avg_reward)
 
     # You want to create an instance of the DQN_Agent class here, and then train / test it. 
