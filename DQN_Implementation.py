@@ -117,7 +117,7 @@ class DQN_Agent():
         self.copy_q_net = copy.deepcopy(self.q_net)
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
-        self.num_episodes = 30
+        self.num_episodes = 3000
         self.num_epoch = 1
         #self.learning_rate = 0.05
         self.discount_factor = 0.99
