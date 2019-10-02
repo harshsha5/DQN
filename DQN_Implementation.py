@@ -134,9 +134,9 @@ class DQN_Agent():
         self.epsilon_decay = 0.9995
         self.train_frequency = 1
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
-        self.evaluate_curr_policy_frequency = 10
+        self.evaluate_curr_policy_frequency = 50
         self.num_episodes_to_evaluate_curr_policy = 20
-        self.target_policy_update_frequency = 20
+        self.target_policy_update_frequency = 10
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
@@ -182,12 +182,12 @@ class DQN_Agent():
                 self.reward_list.append(present_average_reward)
                 self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
                 self.td_error_list.append(average_td_loss)
-            # print("Epsilon is ",self.epsilon)
+                print("Epsilon is ",self.epsilon)
             if(self.epsilon>self.epsilon_min):
                 self.epsilon*=self.epsilon_decay
             if((episode+1)%self.target_policy_update_frequency==0):
                 self.copy_q_net = copy.deepcopy(self.q_net)
-                print("Updated target policy")
+                # print("Updated target policy")
 
         self.q_net.save_model_weights(environment_name+"-weights") #Change name/pass as argument
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
