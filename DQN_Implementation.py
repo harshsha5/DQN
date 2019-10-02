@@ -43,7 +43,7 @@ class QNetwork():
     def load_model_weights(self,weight_file):
         # Helper funciton to load model weights. 
         # e.g.: self.model.load_state_dict(torch.load(model_file))
-        sel.model.load_weights(weight_file)
+        self.model.load_weights(weight_file)
         print("Loaded model")
 
 def transform_state(state,size):
@@ -117,7 +117,7 @@ class DQN_Agent():
         self.copy_q_net = copy.deepcopy(self.q_net)
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
-        self.num_episodes = 3000
+        self.num_episodes = 30
         self.num_epoch = 1
         #self.learning_rate = 0.05
         self.discount_factor = 0.99
@@ -189,7 +189,7 @@ class DQN_Agent():
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
         # Here you need to interact with the environment, irrespective of whether you are using a memory. 
         self.q_net.load_model_weights(model_file)
-        return test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor)
+        return test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.q_net.model)  #VERIFY
 
     def burn_in_memory(self):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
@@ -275,6 +275,8 @@ def main(args):
     agent = DQN_Agent(environment_name) 
     agent.train() 
     print("Final epsilon: ",agent.epsilon)
+    net_avg_reward = agent.test("cart_pole_weights")
+    print("Net average test reward is: ",net_avg_reward)
 
     # You want to create an instance of the DQN_Agent class here, and then train / test it. 
 
