@@ -3,6 +3,7 @@ import keras, tensorflow as tf, numpy as np, gym, sys, copy, argparse
 import matplotlib.pyplot as plt 
 
 from tensorboardX import SummaryWriter
+from keras import backend as K
 
 test_step = 0
 
@@ -16,7 +17,7 @@ class QNetwork():
     def __init__(self, environment_name):
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
-        self.lr = 0.0005
+        self.lr = 0.0001
         self.env = gym.make(environment_name)
         self.model = self.make_model()   
 
@@ -58,7 +59,7 @@ def transform_state(state,size):
 
 class Replay_Memory():
 
-    def __init__(self, env,policy,memory_size=60000, burn_in=10000):
+    def __init__(self, env,policy,memory_size=100000, burn_in=10000):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -128,15 +129,17 @@ class DQN_Agent():
         self.num_episodes = 5000
         self.num_epoch = 1
         #self.learning_rate = 0.05
-        self.discount_factor = 0.99
-        self.epsilon = 0.5
+        self.discount_factor = 1
+        self.epsilon = 1
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.9995
-        self.train_frequency = 2
+        self.train_frequency = 1
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
         self.evaluate_curr_policy_frequency = 50
-        self.num_episodes_to_evaluate_curr_policy = 20
-        self.target_policy_update_frequency = 500
+        self.num_episodes_to_evaluate_curr_policy = 10
+        self.target_policy_update_frequency = 10
+        self.randomly_initialise_network_again_frequency = 1000
+        self.frame_skip_frequency = 20
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
@@ -161,31 +164,39 @@ class DQN_Agent():
 
         # When use replay memory, you should interact with environment here, and store these 
         # transitions to memory, while also updating your model.
-        step_C = 0
+        flag=0
         for episode in range(self.num_episodes):
             # print("Training episode: ",episode)
             done = False
             state = self.env.reset()
             state = transform_state(state,self.env.observation_space.shape[0])
+            time_step = 0
+            net_reward_per_episode = 0
             while (not done):
-                step_C+=1
                 action = self.epsilon_greedy_policy(self.q_net.model.predict(state))
                 new_state, reward, done, info = self.env.step(action)
                 new_state = transform_state(new_state,self.env.observation_space.shape[0])
                 transition = np.array([state,int(action),reward,new_state,int(done)])
-                self.replay_mem.append(transition)
                 state = new_state
-                if(step_C%self.train_frequency==0):
-                    # print("Training sample batch")
-                    self.train_batch(step_C)
+                net_reward_per_episode+=reward
+                #Implementing frame skip
+                if(time_step%self.frame_skip_frequency==0):
+                    # print("appending", time_step)
+                    self.replay_mem.append(transition)
+                time_step+=1
+            if(net_reward_per_episode>-200):
+                flag=1
+                print("Better than -200 award received")
+            if((episode+1)%self.train_frequency==0):
+                # print("Training sample batch")
+                self.train_batch(episode)
                 # print("Epsilon is ",self.epsilon)
-                if(step_C%self.target_policy_update_frequency==0):
-                    self.copy_q_net = copy.deepcopy(self.q_net)
-                    print("Updated target policy")
-            print("Episode done: ", episode)
+            if((episode+1)%self.target_policy_update_frequency==0):
+                self.copy_q_net = copy.deepcopy(self.q_net)
+                # print("Updated target policy")
             if(self.epsilon>self.epsilon_min):
                 self.epsilon*=self.epsilon_decay
-            if((episode)%self.evaluate_curr_policy_frequency==0):
+            if((episode+1)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
                 present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
@@ -195,7 +206,13 @@ class DQN_Agent():
                 self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
                 self.td_error_list.append(average_td_loss)
 
-        self.q_net.save_model_weights(environment_name+"-weights") #Change name/pass as argument
+            if((episode+1)%self.randomly_initialise_network_again_frequency==0 and flag==0):
+                print("Reininitialising network due to poor rewards so far")
+                self.epsilon = 1
+                reset_weights(self.q_net.model)
+                self.copy_q_net = copy.deepcopy(self.q_net)
+
+        self.q_net.save_model_weights(self.environment_name+"-weights") #Change name/pass as argument
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
         plot_graph(self.reward_episode_nums,self.td_error_list,"td_error")
 
@@ -203,27 +220,32 @@ class DQN_Agent():
         data = self.replay_mem.sample_batch()
         loss = 0
         acc = 0
-
+        
         target = get_target_value_batch(data, self.copy_q_net.model, self.discount_factor)
-        present_output_batch = self.q_net.model.predict(np.array(data[:,0].tolist()).squeeze())
+        data_batch = np.array(data[:,0].tolist()).squeeze()
+        present_output_batch = self.q_net.model.predict(data_batch)
+        
         for i in range(data.shape[0]):
             present_output_batch[i,data[i][1]] = target[i]
-
-        present_output_batch = np.squeeze(np.array(present_output_batch))
-        data_batch = np.array(data[:,0].tolist()).squeeze()
+        
         history = self.q_net.model.fit(data_batch,present_output_batch,self.num_epoch,verbose=0)
         loss +=history.history['loss'][-1]
         acc +=history.history['accuracy'][-1]
-
+               
+        # present_output_single_batch=[]
+        # data_single_batch=[]
         # for i in range(data.shape[0]):
-        #     target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
+            
+        #     pdb.set_trace()
+        #     target_single = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
 
         #     #Change the target for only the action's q value. This way only that get's updated
         #     present_output = self.q_net.model.predict(data[i][0])
-        #     present_output[0][data[i][1]] = target
+        #     present_output[0][data[i][1]] = target_single
             
-        #     present_output_batch.append(present_output)
-        #     data_batch.append(data[i][0])
+        #     present_output_single_batch.append(present_output)
+        #     data_single_batch.append(data[i][0])
+
         self.writer.add_scalar('train/loss', loss, step)
         self.writer.add_scalar('train/accuracy', acc, step)
 
@@ -237,7 +259,7 @@ class DQN_Agent():
 
     def burn_in_memory(self):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
-        burn_in = 10000
+        burn_in = 15000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
 def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writer=None):
@@ -288,7 +310,11 @@ def plot_graph(x,y,y_axis):
          plt.title('Average reward VS No. of iterations') 
     plt.show() 
 
-
+def reset_weights(model):
+    session = K.get_session()
+    for layer in model.layers: 
+        if hasattr(layer, 'kernel_initializer'):
+            layer.kernel.initializer.run(session=session)
 
 # Note: if you have problems creating video captures on servers without GUI,
 #       you could save and relaod model to create videos on your laptop. 
