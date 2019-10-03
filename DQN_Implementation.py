@@ -16,7 +16,7 @@ class QNetwork():
     def __init__(self, environment_name):
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
-        self.lr = 0.0001
+        self.lr = 0.0005
         self.env = gym.make(environment_name)
         self.model = self.make_model()   
 
@@ -81,7 +81,7 @@ class Replay_Memory():
             action = env.action_space.sample()
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
-            transition = np.array([state,action,reward,new_state,done])
+            transition = np.array([state,int(action),reward,new_state,int(done)])
             self.append(transition)
             if(done):
                 state = transform_state(env.reset(),env.observation_space.shape[0])
@@ -132,11 +132,11 @@ class DQN_Agent():
         self.epsilon = 0.5
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.9995
-        self.train_frequency = 1
+        self.train_frequency = 2
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
-        self.evaluate_curr_policy_frequency = 100
+        self.evaluate_curr_policy_frequency = 50
         self.num_episodes_to_evaluate_curr_policy = 20
-        self.target_policy_update_frequency = 50
+        self.target_policy_update_frequency = 500
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
@@ -172,24 +172,25 @@ class DQN_Agent():
                 action = self.epsilon_greedy_policy(self.q_net.model.predict(state))
                 new_state, reward, done, info = self.env.step(action)
                 new_state = transform_state(new_state,self.env.observation_space.shape[0])
-                transition = np.array([state,action,reward,new_state,done])
+                transition = np.array([state,int(action),reward,new_state,int(done)])
                 self.replay_mem.append(transition)
                 state = new_state
                 if(step_C%self.train_frequency==0):
                     # print("Training sample batch")
                     self.train_batch(step_C)
                 # print("Epsilon is ",self.epsilon)
-                if((step_C+1)%100==0 and self.epsilon>self.epsilon_min):
-                    self.epsilon*=self.epsilon_decay
                 if(step_C%self.target_policy_update_frequency==0):
                     self.copy_q_net = copy.deepcopy(self.q_net)
                     print("Updated target policy")
+            print("Episode done: ", episode)
+            if(self.epsilon>self.epsilon_min):
+                self.epsilon*=self.epsilon_decay
             if((episode)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
                 present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
-                self.writer.add_scalar("test/td-error", average_td_loss, int((episode+1)/self.evaluate_curr_policy_frequency))
-                self.writer.add_scalar("test/reward", present_average_reward, int((episode+1)/self.evaluate_curr_policy_frequency))
+                self.writer.add_scalar("test/td-error", average_td_loss, int((episode)/self.evaluate_curr_policy_frequency))
+                self.writer.add_scalar("test/reward", present_average_reward, int((episode)/self.evaluate_curr_policy_frequency))
                 self.reward_list.append(present_average_reward)
                 self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
                 self.td_error_list.append(average_td_loss)
@@ -203,24 +204,26 @@ class DQN_Agent():
         loss = 0
         acc = 0
 
-        present_output_batch = []
-        data_batch = []
+        target = get_target_value_batch(data, self.copy_q_net.model, self.discount_factor)
+        present_output_batch = self.q_net.model.predict(np.array(data[:,0].tolist()).squeeze())
         for i in range(data.shape[0]):
-            target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
-
-            #Change the target for only the action's q value. This way only that get's updated
-            present_output = self.q_net.model.predict(data[i][0])
-            present_output[0][data[i][1]] = target
-            
-            present_output_batch.append(present_output)
-            data_batch.append(data[i][0])
+            present_output_batch[i,data[i][1]] = target[i]
 
         present_output_batch = np.squeeze(np.array(present_output_batch))
-        data_batch = np.squeeze(np.array(data_batch))
+        data_batch = np.array(data[:,0].tolist()).squeeze()
         history = self.q_net.model.fit(data_batch,present_output_batch,self.num_epoch,verbose=0)
         loss +=history.history['loss'][-1]
         acc +=history.history['accuracy'][-1]
 
+        # for i in range(data.shape[0]):
+        #     target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
+
+        #     #Change the target for only the action's q value. This way only that get's updated
+        #     present_output = self.q_net.model.predict(data[i][0])
+        #     present_output[0][data[i][1]] = target
+            
+        #     present_output_batch.append(present_output)
+        #     data_batch.append(data[i][0])
         self.writer.add_scalar('train/loss', loss, step)
         self.writer.add_scalar('train/accuracy', acc, step)
 
@@ -262,6 +265,11 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
     print("Average TD Error for:,",num_episodes," episodes ",net_avg_td_error_per_episode/num_episodes)
     
     return ((net_average_reward/num_episodes),(net_avg_td_error_per_episode/num_episodes))
+
+def get_target_value_batch(data, copy_policy, discount_factor):
+    d = np.array(data[:,3].tolist()).squeeze()
+    target_batch = data[:,2] + (1-data[:,4])*discount_factor*np.max(copy_policy.predict(d), axis=1)
+    return target_batch
 
 def get_target_value(reward,done,new_state,policy,discount_factor):
     if(done):
