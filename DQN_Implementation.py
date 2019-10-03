@@ -135,7 +135,7 @@ class DQN_Agent():
         self.train_frequency = 1
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
         self.evaluate_curr_policy_frequency = 50
-        self.num_episodes_to_evaluate_curr_policy = 20
+        self.num_episodes_to_evaluate_curr_policy = 10
         self.target_policy_update_frequency = 10
         self.reward_list = []
         self.reward_episode_nums = []
@@ -172,6 +172,7 @@ class DQN_Agent():
                 new_state = transform_state(new_state,self.env.observation_space.shape[0])
                 transition = np.array([state,action,reward,new_state,done])
                 self.replay_mem.append(transition)
+                state = new_state
             if(episode%self.train_frequency==0):
                 # print("Training sample batch")
                 self.train_batch(episode)
@@ -179,6 +180,8 @@ class DQN_Agent():
                 print("Evaluating current policy", episode+1)
                 present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
+                self.writer.add_scalar("test/td-error", average_td_loss, int((episode+1)/self.evaluate_curr_policy_frequency))
+                self.writer.add_scalar("test/reward", present_average_reward, int((episode+1)/self.evaluate_curr_policy_frequency))
                 self.reward_list.append(present_average_reward)
                 self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
                 self.td_error_list.append(average_td_loss)
@@ -197,18 +200,24 @@ class DQN_Agent():
         data = self.replay_mem.sample_batch()
         loss = 0
         acc = 0
-
+        present_output_batch = []
+        data_batch = []
         for i in range(data.shape[0]):
             target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
-
             #Change the target for only the action's q value. This way only that get's updated
             present_output = self.q_net.model.predict(data[i][0])
             present_output[0][data[i][1]] = target
-            history = self.q_net.model.fit(data[i][0],present_output,self.num_epoch,verbose=0)
-            loss +=history.history['loss'][-1]
-            acc +=history.history['accuracy'][-1]
-        self.writer.add_scalar('train/loss', loss/i, step)
-        self.writer.add_scalar('train/accuracy', acc/i, step)
+            present_output_batch.append(present_output)
+            data_batch.append(data[i][0])
+
+        present_output_batch = np.squeeze(np.array(present_output_batch))
+        data_batch = np.squeeze(np.array(data_batch))
+        history = self.q_net.model.fit(data_batch,present_output_batch,self.num_epoch,verbose=0)
+        loss +=history.history['loss'][-1]
+        acc +=history.history['accuracy'][-1]
+
+        self.writer.add_scalar('train/loss', loss, step)
+        self.writer.add_scalar('train/accuracy', acc, step)
 
 
     def test(self, model_file=None):
