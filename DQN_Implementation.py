@@ -6,6 +6,12 @@ from tensorboardX import SummaryWriter
 
 test_step = 0
 
+def get_huber_loss_fn(**huber_loss_kwargs):
+
+    def custom_huber_loss(y_true, y_pred):
+        return tf.losses.huber_loss(y_true, y_pred, **huber_loss_kwargs)
+
+    return custom_huber_loss
 
 class QNetwork():
 
@@ -13,10 +19,10 @@ class QNetwork():
     # The network should take in state of the world as an input, 
     # and output Q values of the actions available to the agent as the output. 
 
-    def __init__(self, environment_name):
+    def __init__(self, environment_name, lr=0.0001):
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
-        self.lr = 0.0005
+        self.lr = lr
         self.env = gym.make(environment_name)
         self.model = self.make_model()   
 
@@ -28,7 +34,7 @@ class QNetwork():
         keras.layers.Dense(128, activation='relu'),
         keras.layers.Dense(128, activation='relu'),
         keras.layers.Dense(num_actions, activation='linear')]) 
-        model.compile(loss=keras.losses.mean_squared_error,
+        model.compile(loss=get_huber_loss_fn(delta=0.5),
                      optimizer=tf.train.AdamOptimizer(learning_rate=self.lr),
                      metrics=['accuracy'])
         return model
@@ -114,29 +120,30 @@ class DQN_Agent():
     # (4) Create a function to test the Q Network's performance on the environment.
     # (5) Create a function for Experience Replay.
     
-    def __init__(self, environment_name, render=False):
+    def __init__(self, environment_name, args, render=False):
 
         # Create an instance of the network itself, as well as the memory. 
         # Here is also a good place to set environmental parameters,
         # as well as training parameters - number of episodes / iterations, etc. 
         self.environment_name = environment_name
         self.env = gym.make(environment_name)
-        self.q_net = QNetwork(environment_name)
+        self.q_net = QNetwork(environment_name, args.lr)
         self.copy_q_net = copy.deepcopy(self.q_net)
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
-        self.num_episodes = 5000
+        self.num_episodes = args.num_episodes
         self.num_epoch = 1
-        #self.learning_rate = 0.05
-        self.discount_factor = 0.99
-        self.epsilon = 0.5
-        self.epsilon_min = 0.05
-        self.epsilon_decay = 0.9995
-        self.train_frequency = 2
+        self.discount_factor = 1
+        self.epsilon = args.eps
+        self.epsilon_min = args.eps_min
+        self.epsilon_decay = args.eps_decay
+        self.eps_update_freq = args.eps_update_freq
+        self.train_frequency = args.train_freq
+        self.frame_skip = args.frame_skip
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
-        self.evaluate_curr_policy_frequency = 50
+        self.evaluate_curr_policy_frequency = args.eval_pol_freq
         self.num_episodes_to_evaluate_curr_policy = 20
-        self.target_policy_update_frequency = 500
+        self.target_policy_update_frequency = args.target_pol_update_freq
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
@@ -162,6 +169,7 @@ class DQN_Agent():
         # When use replay memory, you should interact with environment here, and store these 
         # transitions to memory, while also updating your model.
         step_C = 0
+        print("Begun training")
         for episode in range(self.num_episodes):
             # print("Training episode: ",episode)
             done = False
@@ -173,18 +181,22 @@ class DQN_Agent():
                 new_state, reward, done, info = self.env.step(action)
                 new_state = transform_state(new_state,self.env.observation_space.shape[0])
                 transition = np.array([state,int(action),reward,new_state,int(done)])
-                self.replay_mem.append(transition)
+                if(step_C%self.frame_skip == 0):
+                    self.replay_mem.append(transition)
                 state = new_state
-                if(step_C%self.train_frequency==0):
-                    # print("Training sample batch")
+
+                if(step_C % self.train_frequency==0):                    
                     self.train_batch(step_C)
-                # print("Epsilon is ",self.epsilon)
-                if(step_C%self.target_policy_update_frequency==0):
+                
+                if(self.epsilon>self.epsilon_min and step_C%self.eps_update_freq == 0):
+                    self.epsilon*=self.epsilon_decay
+                
+                if(episode % self.target_policy_update_frequency==0):
                     self.copy_q_net = copy.deepcopy(self.q_net)
-                    print("Updated target policy")
+                print("Step: ", step_C)
+
             print("Episode done: ", episode)
-            if(self.epsilon>self.epsilon_min):
-                self.epsilon*=self.epsilon_decay
+            
             if((episode)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
                 present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
@@ -237,7 +249,7 @@ class DQN_Agent():
 
     def burn_in_memory(self):
         # Initialize your replay memory with a burn_in number of episodes / transitions. 
-        burn_in = 10000
+        burn_in = 20000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
 def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writer=None):
@@ -253,10 +265,11 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
         num_steps = 0
         present_td_error = 0
         while (not done):
-            action = np.argmax(policy.predict(state), axis=1)[0]
+            prediction = policy.predict(state)
+            action = np.argmax(prediction, axis=1)[0]
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
-            present_td_error = present_td_error + abs(np.max(policy.predict(state), axis=1)[0] - get_target_value(reward,done,new_state,copy_policy,discount_factor))
+            present_td_error = present_td_error + abs(np.max(prediction, axis=1)[0] - get_target_value(reward,done,new_state,copy_policy,discount_factor))
             state = new_state
             present_reward = present_reward + reward
             num_steps+=1
@@ -321,6 +334,19 @@ def parse_arguments():
     parser.add_argument('--render',dest='render',type=int,default=0)
     parser.add_argument('--train',dest='train',type=int,default=1)
     parser.add_argument('--model',dest='model_file',type=str)
+
+    parser.add_argument('--lr',dest='lr',type=float,default=0.0001)
+    parser.add_argument('--num_episodes',dest='num_episodes',type=int,default=5000)
+    parser.add_argument('--eps',dest='eps',type=float,default=0.5)
+    parser.add_argument('--eps_decay',dest='eps_decay',type=float,default=0.9995)
+    parser.add_argument('--eps_min',dest='eps_min',type=float,default=0.05)
+    parser.add_argument('--eps_update_freq',dest='eps_update_freq',type=int,default=10000)
+    parser.add_argument('--train_freq',dest='train_freq',type=int,default=2)
+    parser.add_argument('--discount_factor',dest='discount_factor',type=float,default=1)
+    parser.add_argument('--eval_pol_freq',dest='eval_pol_freq',type=int,default=50)
+    parser.add_argument('--target_pol_update_freq',dest='target_pol_update_freq',type=int,default=1000)
+    parser.add_argument('--frame_skip',dest='frame_skip',type=int,default=2)
+
     return parser.parse_args()
 
 
@@ -336,7 +362,7 @@ def main(args):
 
     # Setting this as the default tensorflow session. 
     keras.backend.tensorflow_backend.set_session(sess)
-    agent = DQN_Agent(environment_name) 
+    agent = DQN_Agent(environment_name, args) 
     agent.train() 
     print("Final epsilon: ",agent.epsilon)
     net_avg_reward = agent.test(environment_name+"-weights")
