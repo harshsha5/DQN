@@ -148,7 +148,6 @@ class DQN_Agent():
         self.reward_episode_nums = []
         self.td_error_list = []
         self.writer = SummaryWriter()
-        self.writer = SummaryWriter()
         self.double_dqn = args.double_dqn
 
     def epsilon_greedy_policy(self, q_values):
@@ -202,7 +201,7 @@ class DQN_Agent():
 
             if((episode)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
-                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
+                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer, self.double_dqn)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
                 self.writer.add_scalar("test/td-error", average_td_loss, int((episode)/self.evaluate_curr_policy_frequency))
                 self.writer.add_scalar("test/reward", present_average_reward, int((episode)/self.evaluate_curr_policy_frequency))
@@ -247,7 +246,7 @@ class DQN_Agent():
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
         # Here you need to interact with the environment, irrespective of whether you are using a memory. 
         self.q_net.load_model_weights(model_file)
-        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.q_net.model)  #VERIFY
+        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.copy_q_net.model, self.writer, self.double_dqn)  #VERIFY
         return reward
 
     def burn_in_memory(self):
@@ -255,7 +254,7 @@ class DQN_Agent():
         burn_in = 20000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
-def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writer=None):
+def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy, writer, double_dqn):
     global test_step
     test_step += 1
     net_average_reward = 0
@@ -272,7 +271,7 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
             action = np.argmax(prediction, axis=1)[0]
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
-            present_td_error = present_td_error + abs(np.max(prediction, axis=1)[0] - get_target_value(reward,done,new_state,copy_policy,discount_factor))
+            present_td_error = present_td_error + abs(np.max(prediction, axis=1)[0] - get_target_value(reward,done,new_state,policy, copy_policy,discount_factor, double_dqn))
             state = new_state
             present_reward = present_reward + reward
             num_steps+=1
@@ -283,23 +282,29 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
     return ((net_average_reward/num_episodes),(net_avg_td_error_per_episode/num_episodes))
 
 def get_target_value_batch(data, policy, copy_policy, discount_factor, double_dqn):
-    d = np.array(data[:,3].tolist()).squeeze()
+    new_state = np.array(data[:,3].tolist()).squeeze()
 
     if double_dqn: # Double-DQN
-        best_action_idx = np.argmax(policy.predict(d), axis=1) ## Action selection using policy
-        best_action_q_value = copy_policy.predict(d)[np.arange(best_action_idx.shape[0]), best_action_idx]  ## Action evaluation using copy policy
+        best_action_idx = np.argmax(policy.predict(new_state), axis=1) ## Action selection using policy
+        best_action_q_value = copy_policy.predict(new_state)[np.arange(best_action_idx.shape[0]), best_action_idx]  ## Action evaluation using copy policy
     else: # DQN
-        best_action_q_value = np.max(copy_policy.predict(d), axis=1)  ## Action selection and evaluation using copy policy
+        best_action_q_value = np.max(copy_policy.predict(new_state), axis=1)  ## Action selection and evaluation using copy policy
 
     target_batch = data[:,2] + (1-data[:,4])*discount_factor*best_action_q_value
 
     return target_batch
 
-def get_target_value(reward,done,new_state,policy,discount_factor):
+def get_target_value(reward,done,new_state, policy, copy_policy, discount_factor, double_dqn):
     if(done):
         return reward
     else:
-        return reward + discount_factor*np.max(policy.predict(new_state), axis=1)[0]
+        if double_dqn: # Double-DQN
+            best_action_idx = np.argmax(policy.predict(new_state), axis=1) ## Action selection using policy
+            best_action_q_value = copy_policy.predict(new_state)[np.arange(best_action_idx.shape[0]), best_action_idx]  ## Action evaluation using copy policy
+        else: # DQN
+            best_action_q_value = np.max(copy_policy.predict(new_state), axis=1)  ## Action selection and evaluation using copy policy
+
+        return reward + discount_factor*best_action_q_value[0]
 
 def plot_graph(x,y,y_axis): 
     plt.plot(x, y) 
