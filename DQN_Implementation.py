@@ -148,6 +148,8 @@ class DQN_Agent():
         self.reward_episode_nums = []
         self.td_error_list = []
         self.writer = SummaryWriter()
+        self.writer = SummaryWriter()
+        self.double_dqn = args.double_dqn
 
     def epsilon_greedy_policy(self, q_values):
         # Creating epsilon greedy probabilities to sample from.  
@@ -213,11 +215,11 @@ class DQN_Agent():
         plot_graph(self.reward_episode_nums,self.td_error_list,"td_error")
 
     def train_batch(self, step):
-        data = self.replay_mem.sample_batch()
+        data = self.replay_mem.sample_batch()  # s, a, r, s', done
         loss = 0
         acc = 0
 
-        target = get_target_value_batch(data, self.copy_q_net.model, self.discount_factor)
+        target = get_target_value_batch(data, self.q_net.model, self.copy_q_net.model, self.discount_factor, self.double_dqn)
         present_output_batch = self.q_net.model.predict(np.array(data[:,0].tolist()).squeeze())
         for i in range(data.shape[0]):
             present_output_batch[i,data[i][1]] = target[i]
@@ -280,9 +282,17 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
     
     return ((net_average_reward/num_episodes),(net_avg_td_error_per_episode/num_episodes))
 
-def get_target_value_batch(data, copy_policy, discount_factor):
+def get_target_value_batch(data, policy, copy_policy, discount_factor, double_dqn):
     d = np.array(data[:,3].tolist()).squeeze()
-    target_batch = data[:,2] + (1-data[:,4])*discount_factor*np.max(copy_policy.predict(d), axis=1)
+
+    if double_dqn: # Double-DQN
+        best_action_idx = np.argmax(policy.predict(d), axis=1) ## Action selection using policy
+        best_action_q_value = copy_policy.predict(d)[np.arange(best_action_idx.shape[0]), best_action_idx]  ## Action evaluation using copy policy
+    else: # DQN
+        best_action_q_value = np.max(copy_policy.predict(d), axis=1)  ## Action selection and evaluation using copy policy
+
+    target_batch = data[:,2] + (1-data[:,4])*discount_factor*best_action_q_value
+
     return target_batch
 
 def get_target_value(reward,done,new_state,policy,discount_factor):
@@ -348,6 +358,7 @@ def parse_arguments():
     parser.add_argument('--target_pol_update_freq',dest='target_pol_update_freq',type=int,default=1000)
     parser.add_argument('--frame_skip',dest='frame_skip',type=int,default=2)
 
+    parser.add_argument('--double_dqn',dest='double_dqn',type=bool,default=False)
     return parser.parse_args()
 
 
@@ -360,6 +371,11 @@ def main(args):
     gpu_ops = tf.GPUOptions(allow_growth=True)
     config = tf.ConfigProto(gpu_options=gpu_ops)
     sess = tf.Session(config=config)
+
+    if args.double_dqn:
+        print("RUNNING DOUBLE DQN ")
+    else:
+        print("RUNNING DQN ")
 
     # Setting this as the default tensorflow session. 
     keras.backend.tensorflow_backend.set_session(sess)
