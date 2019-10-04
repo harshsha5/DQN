@@ -58,7 +58,7 @@ def transform_state(state,size):
 
 class Replay_Memory():
 
-    def __init__(self, env,policy,memory_size=60000, burn_in=10000):
+    def __init__(self, env,policy,memory_size=100000, burn_in=10000):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -194,7 +194,7 @@ class DQN_Agent():
                 self.copy_q_net = copy.deepcopy(self.q_net)
                 # print("Updated target policy")
 
-        self.q_net.save_model_weights(environment_name+"-weights") #Change name/pass as argument
+        self.q_net.save_model_weights(self.environment_name+"-weights") #Change name/pass as argument
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
         plot_graph(self.reward_episode_nums,self.td_error_list,"td_error")
 
