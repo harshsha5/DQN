@@ -64,7 +64,7 @@ def transform_state(state,size):
 
 class Replay_Memory():
 
-    def __init__(self, env,policy,memory_size=60000, burn_in=10000):
+    def __init__(self, env,policy,memory_size=100000, burn_in=10000):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -177,23 +177,22 @@ class DQN_Agent():
             state = self.env.reset()
             state = transform_state(state,self.env.observation_space.shape[0])
             while (not done):
-                step_C+=1
+                frames = 0
                 action = self.epsilon_greedy_policy(self.q_net.model.predict_on_batch(state))
-                new_state, reward, done, info = self.env.step(action)
-                new_state = transform_state(new_state,self.env.observation_space.shape[0])
-                transition = np.array([state,int(action),reward,new_state,int(done)])
-                state = new_state
-                if(step_C%self.frame_skip == 0):
-                    self.replay_mem.append(transition)
-
-                if(step_C % self.train_frequency==0):                    
+                while(frames<self.frame_skip and not done):
+                    new_state, reward, done, info = self.env.step(action)
+                    new_state = transform_state(new_state,self.env.observation_space.shape[0])
+                    frames+=1
+                    transition = np.array([state,int(action),reward,new_state,int(done)])
+                    self.replay_mem.append(transition)  
+                    state = new_state.copy()              
+                step_C+=1
+                if(step_C%self.train_frequency == 0):
                     self.train_batch(step_C)
-                
+            
             if(self.epsilon>self.epsilon_min):
                 self.epsilon*=self.epsilon_decay
                 
-                # print("Step: ", step_C)
-
             print("Episode done: ", episode)
             
             if(episode % self.target_policy_update_frequency==0):
@@ -205,9 +204,6 @@ class DQN_Agent():
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
                 self.writer.add_scalar("test/td-error", average_td_loss, int((episode)/self.evaluate_curr_policy_frequency))
                 self.writer.add_scalar("test/reward", present_average_reward, int((episode)/self.evaluate_curr_policy_frequency))
-                # self.reward_list.append(present_average_reward)
-                # self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
-                # self.td_error_list.append(average_td_loss)
 
         self.q_net.save_model_weights(environment_name+"-weights") #Change name/pass as argument
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
@@ -227,7 +223,7 @@ class DQN_Agent():
         data_batch = np.array(data[:,0].tolist()).squeeze()
         history = self.q_net.model.fit(data_batch,present_output_batch,self.num_epoch,verbose=0)
         loss +=history.history['loss'][-1]
-        acc +=history.history['acc'][-1]
+        acc +=history.history['accuracy'][-1]
 
         # for i in range(data.shape[0]):
         #     target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
