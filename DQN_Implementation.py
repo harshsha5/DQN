@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 
 from tensorboardX import SummaryWriter
 from keras import backend as K
+import random
 
 test_step = 0
 
@@ -17,7 +18,7 @@ class QNetwork():
     def __init__(self, environment_name):
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
-        self.lr = 0.0001
+        self.lr = 0.0005
         self.env = gym.make(environment_name)
         self.model = self.make_model()   
 
@@ -59,7 +60,7 @@ def transform_state(state,size):
 
 class Replay_Memory():
 
-    def __init__(self, env,policy,memory_size=100000, burn_in=10000):
+    def __init__(self, env,policy,memory_size=100000, burn_in=20000):
 
         # The memory essentially stores transitions recorder from the agent
         # taking actions in the environment.
@@ -77,17 +78,39 @@ class Replay_Memory():
     def generate_burn_in_memory(self,burn_in,env,policy):
         state = env.reset()
         state = transform_state(state,env.observation_space.shape[0])
+        left_right_actions = [0,2]
+        net_reward= 0
         for i in range(burn_in):
-            #action = np.argmax(policy.predict(state), axis=1)[0]
             action = env.action_space.sample()
+            #action = random.sample(left_right_actions,k=1)[0]
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
             transition = np.array([state,int(action),reward,new_state,int(done)])
             self.append(transition)
+            net_reward+=reward
             if(done):
                 state = transform_state(env.reset(),env.observation_space.shape[0])
+                print("Net Reward in Burn_in",i,net_reward)
+                net_reward=0
             else:
                 state = new_state
+
+        #     target_state = 0.5
+        #     state = target_state
+        # while(i<burn_in):
+        #     action = random.sample(left_right_actions,k=1)[0]
+        #     new_state, reward, done, info = env.step(action)
+        #     new_state = transform_state(new_state,env.observation_space.shape[0])
+        #     transition = np.array([state,int(action),reward,new_state,int(done)])
+        #     self.append(transition)
+        #     net_reward+=reward
+        #     if(done):
+        #         state = transform_state(target_state,env.observation_space.shape[0])
+        #         print("Net Reward in Burn_in",i,net_reward)
+        #         net_reward=0
+        #     else:
+        #         state = new_state
+
 
     def sample_batch(self, batch_size=32):
         # This function returns a batch of randomly sampled transitions - i.e. state, action, reward, next state, terminal flag tuples. 
@@ -132,12 +155,12 @@ class DQN_Agent():
         self.discount_factor = 1
         self.epsilon = 1
         self.epsilon_min = 0.05
-        self.epsilon_decay = 0.9995
+        self.epsilon_decay = 0.999
         self.train_frequency = 1
         self.num_test_episodes = 100 #This is for final testing- how many episodes should we average our rewards over
         self.evaluate_curr_policy_frequency = 50
         self.num_episodes_to_evaluate_curr_policy = 10
-        self.target_policy_update_frequency = 10
+        self.target_policy_update_frequency = 5
         self.randomly_initialise_network_again_frequency = 1000
         self.frame_skip_frequency = 20
         self.reward_list = []
@@ -173,23 +196,28 @@ class DQN_Agent():
             time_step = 0
             net_reward_per_episode = 0
             while (not done):
-                action = self.epsilon_greedy_policy(self.q_net.model.predict(state))
+                if(time_step%self.frame_skip_frequency==0):
+                    action = self.epsilon_greedy_policy(self.q_net.model.predict(state))
                 new_state, reward, done, info = self.env.step(action)
                 new_state = transform_state(new_state,self.env.observation_space.shape[0])
                 transition = np.array([state,int(action),reward,new_state,int(done)])
                 state = new_state
                 net_reward_per_episode+=reward
+                if(done and time_step!=199):
+                    print("Episode done",time_step)
                 #Implementing frame skip
-                if(time_step%self.frame_skip_frequency==0):
-                    # print("appending", time_step)
-                    self.replay_mem.append(transition)
+                # if(time_step%self.frame_skip_frequency==0):
+                #     # print("appending", time_step)
+                #     self.replay_mem.append(transition)
                 time_step+=1
+            # print("Net reward for episode ",episode," is ",net_reward_per_episode)
             if(net_reward_per_episode>-200):
                 flag=1
                 print("Better than -200 award received")
             if((episode+1)%self.train_frequency==0):
                 # print("Training sample batch")
-                self.train_batch(episode)
+                for i in range(10):
+                    self.train_batch(episode)
                 # print("Epsilon is ",self.epsilon)
             if((episode+1)%self.target_policy_update_frequency==0):
                 self.copy_q_net = copy.deepcopy(self.q_net)
@@ -198,7 +226,7 @@ class DQN_Agent():
                 self.epsilon*=self.epsilon_decay
             if((episode+1)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
-                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
+                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.frame_skip_frequency,self.epsilon,self.writer)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
                 self.writer.add_scalar("test/td-error", average_td_loss, int((episode)/self.evaluate_curr_policy_frequency))
                 self.writer.add_scalar("test/reward", present_average_reward, int((episode)/self.evaluate_curr_policy_frequency))
@@ -206,11 +234,11 @@ class DQN_Agent():
                 self.reward_episode_nums.append((episode+1)/self.evaluate_curr_policy_frequency)
                 self.td_error_list.append(average_td_loss)
 
-            if((episode+1)%self.randomly_initialise_network_again_frequency==0 and flag==0):
-                print("Reininitialising network due to poor rewards so far")
-                self.epsilon = 1
-                reset_weights(self.q_net.model)
-                self.copy_q_net = copy.deepcopy(self.q_net)
+            # if((episode+1)%self.randomly_initialise_network_again_frequency==0 and flag==0):
+            #     print("Reininitialising network due to poor rewards so far")
+            #     self.epsilon = 1
+            #     reset_weights(self.q_net.model)
+            #     self.copy_q_net = copy.deepcopy(self.q_net)
 
         self.q_net.save_model_weights(self.environment_name+"-weights") #Change name/pass as argument
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
@@ -228,7 +256,7 @@ class DQN_Agent():
         for i in range(data.shape[0]):
             present_output_batch[i,data[i][1]] = target[i]
         
-        history = self.q_net.model.fit(data_batch,present_output_batch,self.num_epoch,verbose=0)
+        history = self.q_net.model.fit(data_batch,present_output_batch,batch_size = 32,epochs= self.num_epoch,verbose=0)
         loss +=history.history['loss'][-1]
         acc +=history.history['accuracy'][-1]
                
@@ -254,7 +282,7 @@ class DQN_Agent():
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
         # Here you need to interact with the environment, irrespective of whether you are using a memory. 
         self.q_net.load_model_weights(model_file)
-        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.q_net.model)  #VERIFY
+        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.q_net.model,self.frame_skip_frequency,self.epsilon)  #VERIFY
         return reward
 
     def burn_in_memory(self):
@@ -262,7 +290,15 @@ class DQN_Agent():
         burn_in = 15000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
-def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writer=None):
+def e_greedy_policy(q_values,epsilon,env):
+    # Creating epsilon greedy probabilities to sample from.  
+    random_number = np.random.rand()
+    if(random_number<=epsilon):
+        return env.action_space.sample()
+    else:
+        return np.argmax(q_values,axis=1)[0]
+
+def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,frame_skip_frequency,epsilon,writer=None):
     global test_step
     test_step += 1
     net_average_reward = 0
@@ -275,7 +311,9 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
         num_steps = 0
         present_td_error = 0
         while (not done):
-            action = np.argmax(policy.predict(state), axis=1)[0]
+            if(num_steps%frame_skip_frequency==0):
+                #action = np.argmax(policy.predict(state), axis=1)[0]
+                action = e_greedy_policy(policy.predict(state),epsilon,env)
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
             present_td_error = present_td_error + abs(np.max(policy.predict(state), axis=1)[0] - get_target_value(reward,done,new_state,copy_policy,discount_factor))
