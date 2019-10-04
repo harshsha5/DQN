@@ -129,6 +129,7 @@ class DQN_Agent():
         self.env = gym.make(environment_name)
         self.q_net = QNetwork(environment_name, args.lr)
         self.copy_q_net = copy.deepcopy(self.q_net)
+        # self.copy_q_net.model.set_weights(self.q_net.model.get_weights())
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
         self.num_episodes = args.num_episodes
@@ -186,18 +187,17 @@ class DQN_Agent():
                     frames+=1
                     transition = np.array([state,int(action),reward,new_state,int(done)])
                     self.replay_mem.append(transition)  
-                    state = new_state.copy()              
+                    state = new_state.copy()
                 step_C+=1
                 if(step_C%self.train_frequency == 0):
                     self.train_batch(step_C)
-            
             if(self.epsilon>self.epsilon_min):
                 self.epsilon*=self.epsilon_decay
                 
             print("Episode done: ", episode)
             
             if(episode % self.target_policy_update_frequency==0):
-                self.copy_q_net = copy.deepcopy(self.q_net)
+                self.copy_q_net.model.set_weights(self.q_net.model.get_weights())
 
             if((episode)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
