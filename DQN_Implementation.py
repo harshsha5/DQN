@@ -13,10 +13,10 @@ class QNetwork():
     # The network should take in state of the world as an input, 
     # and output Q values of the actions available to the agent as the output. 
 
-    def __init__(self, environment_name):
+    def __init__(self, environment_name, lr):
         # Define your network architecture here. It is also a good idea to define any training operations 
         # and optimizers here, initialize your variables, or alternately compile your model here.  
-        self.lr = 0.0001
+        self.lr = lr
         self.env = gym.make(environment_name)
         self.model = self.make_model()   
 
@@ -114,14 +114,14 @@ class DQN_Agent():
     # (4) Create a function to test the Q Network's performance on the environment.
     # (5) Create a function for Experience Replay.
     
-    def __init__(self, environment_name, render=False):
+    def __init__(self, environment_name, args, render=False):
 
         # Create an instance of the network itself, as well as the memory. 
         # Here is also a good place to set environmental parameters,
         # as well as training parameters - number of episodes / iterations, etc. 
         self.environment_name = environment_name
         self.env = gym.make(environment_name)
-        self.q_net = QNetwork(environment_name)
+        self.q_net = QNetwork(environment_name, args.lr)
         self.copy_q_net = copy.deepcopy(self.q_net)
         self.replay_mem = Replay_Memory(self.env,self.q_net.model)
         self.burn_in_memory()
@@ -140,7 +140,9 @@ class DQN_Agent():
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
-        self.writer = SummaryWriter()
+        dic = {True: "DDQN", False:"DQN"}
+        self.writer = SummaryWriter('./runs/'+dic[args.double_dqn]+environment_name+ "_"+str(args.lr))
+        self.double_dqn = args.double_dqn
 
     def epsilon_greedy_policy(self, q_values):
         # Creating epsilon greedy probabilities to sample from.  
@@ -178,7 +180,7 @@ class DQN_Agent():
                 self.train_batch(episode)
             if((episode+1)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
-                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer)
+                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.double_dqn,self.writer)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
                 self.writer.add_scalar("test/td-error", average_td_loss, int((episode+1)/self.evaluate_curr_policy_frequency))
                 self.writer.add_scalar("test/reward", present_average_reward, int((episode+1)/self.evaluate_curr_policy_frequency))
@@ -203,7 +205,7 @@ class DQN_Agent():
         present_output_batch = []
         data_batch = []
         for i in range(data.shape[0]):
-            target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
+            target = get_target_value(data[i][2],data[i][4],data[i][3],self.q_net.model, self.copy_q_net.model,self.discount_factor, self.double_dqn)
             #Change the target for only the action's q value. This way only that get's updated
             present_output = self.q_net.model.predict(data[i][0])
             present_output[0][data[i][1]] = target
@@ -214,7 +216,7 @@ class DQN_Agent():
         data_batch = np.squeeze(np.array(data_batch))
         history = self.q_net.model.fit(data_batch,present_output_batch,self.num_epoch,verbose=0)
         loss +=history.history['loss'][-1]
-        acc +=history.history['accuracy'][-1]
+        acc +=history.history['acc'][-1]
 
         self.writer.add_scalar('train/loss', loss, step)
         self.writer.add_scalar('train/accuracy', acc, step)
@@ -224,7 +226,7 @@ class DQN_Agent():
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
         # Here you need to interact with the environment, irrespective of whether you are using a memory. 
         self.q_net.load_model_weights(model_file)
-        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.q_net.model)  #VERIFY
+        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.q_net.model, self.double_dqn)  #VERIFY
         return reward
 
     def burn_in_memory(self):
@@ -232,7 +234,7 @@ class DQN_Agent():
         burn_in = 10000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
-def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writer=None):
+def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,double_dqn,writer=None):
     global test_step
     test_step += 1
     net_average_reward = 0
@@ -248,7 +250,7 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
             action = np.argmax(policy.predict(state), axis=1)[0]
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
-            present_td_error = present_td_error + abs(np.max(policy.predict(state), axis=1)[0] - get_target_value(reward,done,new_state,copy_policy,discount_factor))
+            present_td_error = present_td_error + abs(np.max(policy.predict(state), axis=1)[0] - get_target_value(reward,done,new_state, policy, copy_policy,discount_factor, double_dqn))
             state = new_state
             present_reward = present_reward + reward
             num_steps+=1
@@ -261,11 +263,17 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy,writ
         writer.add_scalar("test/reward", net_average_reward/num_episodes, test_step)
     return ((net_average_reward/num_episodes),(net_avg_td_error_per_episode/num_episodes))
 
-def get_target_value(reward,done,new_state,policy,discount_factor):
+def get_target_value(reward,done,new_state,policy, copy_policy, discount_factor, double_dqn):
     if(done):
         return reward
     else:
-        return reward + discount_factor*np.max(policy.predict(new_state), axis=1)[0]
+        if double_dqn: # Double-DQN
+            best_action_idx = np.argmax(policy.predict(new_state), axis=1) ## Action selection using policy
+            best_action_q_value = copy_policy.predict(new_state)[np.arange(best_action_idx.shape[0]), best_action_idx]  ## Action evaluation using copy policy
+        else: # DQN
+            best_action_q_value = np.max(copy_policy.predict(new_state), axis=1)  ## Action selection and evaluation using copy policy
+
+        return reward + discount_factor*best_action_q_value[0]
 
 def plot_graph(x,y,y_axis): 
     plt.plot(x, y) 
@@ -311,6 +319,8 @@ def parse_arguments():
     parser.add_argument('--render',dest='render',type=int,default=0)
     parser.add_argument('--train',dest='train',type=int,default=1)
     parser.add_argument('--model',dest='model_file',type=str)
+    parser.add_argument('--double_dqn',dest='double_dqn',type=bool,default=False)
+    parser.add_argument('--lr',dest='lr',type=float,default=0.0001)
     return parser.parse_args()
 
 
@@ -324,9 +334,14 @@ def main(args):
     config = tf.ConfigProto(gpu_options=gpu_ops)
     sess = tf.Session(config=config)
 
+    if args.double_dqn:
+        print("RUNNING DOUBLE DQN ")
+    else:
+        print("RUNNING DQN ")
+
     # Setting this as the default tensorflow session. 
     keras.backend.tensorflow_backend.set_session(sess)
-    agent = DQN_Agent(environment_name) 
+    agent = DQN_Agent(environment_name, args)
     agent.train() 
     print("Final epsilon: ",agent.epsilon)
     net_avg_reward = agent.test(environment_name+"-weights")
