@@ -147,7 +147,8 @@ class DQN_Agent():
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
-        self.writer = SummaryWriter('./runs/'+environment_name+ "_"+str(args.lr))
+        dic = {True: "DDQN", False:"DQN"}
+        self.writer = SummaryWriter('./runs/'+dic[args.double_dqn]+environment_name+ "_"+str(args.lr))
         self.double_dqn = args.double_dqn
 
     def epsilon_greedy_policy(self, q_values):
@@ -223,7 +224,7 @@ class DQN_Agent():
         data_batch = np.array(data[:,0].tolist()).squeeze()
         history = self.q_net.model.fit(data_batch, present_output_batch, batch_size=32, epochs=1, verbose=0)
         loss +=history.history['loss'][-1]
-        acc +=history.history['accuracy'][-1]
+        acc +=history.history['acc'][-1]
 
         # for i in range(data.shape[0]):
         #     target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
