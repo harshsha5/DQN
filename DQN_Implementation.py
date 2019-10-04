@@ -147,7 +147,7 @@ class DQN_Agent():
         self.reward_list = []
         self.reward_episode_nums = []
         self.td_error_list = []
-        self.writer = SummaryWriter()
+        self.writer = SummaryWriter('./runs/'+environment_name+ "_"+str(args.lr))
         self.double_dqn = args.double_dqn
 
     def epsilon_greedy_policy(self, q_values):
@@ -189,8 +189,8 @@ class DQN_Agent():
                 if(step_C % self.train_frequency==0):                    
                     self.train_batch(step_C)
                 
-                if(self.epsilon>self.epsilon_min and step_C%self.eps_update_freq == 0):
-                    self.epsilon*=self.epsilon_decay
+            if(self.epsilon>self.epsilon_min):
+                self.epsilon*=self.epsilon_decay
                 
                 # print("Step: ", step_C)
 

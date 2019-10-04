@@ -1,1 +1,0 @@
-The tensorboard logs are stored here.
