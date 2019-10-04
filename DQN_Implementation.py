@@ -201,7 +201,7 @@ class DQN_Agent():
 
             if((episode)%self.evaluate_curr_policy_frequency==0):
                 print("Evaluating current policy", episode+1)
-                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer, self.double_dqn)
+                present_average_reward,average_td_loss = test_present_policy(self.env,self.num_episodes_to_evaluate_curr_policy,self.q_net.model,self.discount_factor,self.copy_q_net.model,self.writer, self.double_dqn, self.frame_skip)
                 print("Average reward over ",self.num_episodes_to_evaluate_curr_policy," episodes: ",present_average_reward)
                 self.writer.add_scalar("test/td-error", average_td_loss, int((episode)/self.evaluate_curr_policy_frequency))
                 self.writer.add_scalar("test/reward", present_average_reward, int((episode)/self.evaluate_curr_policy_frequency))
@@ -224,7 +224,7 @@ class DQN_Agent():
         data_batch = np.array(data[:,0].tolist()).squeeze()
         history = self.q_net.model.fit(data_batch, present_output_batch, batch_size=32, epochs=1, verbose=0)
         loss +=history.history['loss'][-1]
-        acc +=history.history['acc'][-1]
+        acc +=history.history['accuracy'][-1]
 
         # for i in range(data.shape[0]):
         #     target = get_target_value(data[i][2],data[i][4],data[i][3],self.copy_q_net.model,self.discount_factor)
@@ -243,7 +243,7 @@ class DQN_Agent():
         # Evaluate the performance of your agent over 100 episodes, by calculating cummulative rewards for the 100 episodes.
         # Here you need to interact with the environment, irrespective of whether you are using a memory. 
         self.q_net.load_model_weights(model_file)
-        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.copy_q_net.model, self.writer, self.double_dqn)  #VERIFY
+        reward,td_error = test_present_policy(self.env,self.num_test_episodes,self.q_net.model,self.discount_factor,self.copy_q_net.model, self.writer, self.double_dqn, self.frame_skip)  #VERIFY
         return reward
 
     def burn_in_memory(self):
@@ -251,7 +251,7 @@ class DQN_Agent():
         burn_in = 20000
         self.replay_mem.generate_burn_in_memory(burn_in,self.env,self.q_net.model)
 
-def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy, writer, double_dqn):
+def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy, writer, double_dqn, frame_skip=1):
     global test_step
     test_step += 1
     net_average_reward = 0
@@ -266,12 +266,15 @@ def test_present_policy(env,num_episodes,policy,discount_factor,copy_policy, wri
         while (not done):
             prediction = policy.predict(state)
             action = np.argmax(prediction, axis=1)[0]
-            new_state, reward, done, info = env.step(action)
-            new_state = transform_state(new_state,env.observation_space.shape[0])
-            present_td_error = present_td_error + abs(np.max(prediction, axis=1)[0] - get_target_value(reward,done,new_state,policy, copy_policy,discount_factor, double_dqn))
-            state = new_state
-            present_reward = present_reward + reward
-            num_steps+=1
+            frames = 0
+            while(frames<frame_skip and not done):
+                new_state, reward, done, info = env.step(action)
+                new_state = transform_state(new_state,env.observation_space.shape[0])
+                present_td_error = present_td_error + abs(np.max(prediction, axis=1)[0] - get_target_value(reward,done,new_state,policy, copy_policy,discount_factor, double_dqn))
+                state = new_state
+                present_reward = present_reward + reward
+                num_steps+=1
+                frames+=1
         net_avg_td_error_per_episode = net_avg_td_error_per_episode + (present_td_error/num_steps)
         net_average_reward = net_average_reward + present_reward
     print("Average TD Error for:,",num_episodes," episodes ",net_avg_td_error_per_episode/num_episodes)
