@@ -83,7 +83,7 @@ class Replay_Memory():
         state = env.reset()
         state = transform_state(state,env.observation_space.shape[0])
         for i in range(burn_in):
-            #action = np.argmax(policy.predict(state), axis=1)[0]
+            #action = np.argmax(policy.predict_on_batch(state), axis=1)[0]
             action = env.action_space.sample()
             new_state, reward, done, info = env.step(action)
             new_state = transform_state(new_state,env.observation_space.shape[0])
@@ -178,7 +178,7 @@ class DQN_Agent():
             state = transform_state(state,self.env.observation_space.shape[0])
             while (not done):
                 step_C+=1
-                action = self.epsilon_greedy_policy(self.q_net.model.predict(state))
+                action = self.epsilon_greedy_policy(self.q_net.model.predict_on_batch(state))
                 new_state, reward, done, info = self.env.step(action)
                 new_state = transform_state(new_state,self.env.observation_space.shape[0])
                 transition = np.array([state,int(action),reward,new_state,int(done)])
@@ -219,7 +219,7 @@ class DQN_Agent():
         acc = 0
 
         target = get_target_value_batch(data, self.q_net.model, self.copy_q_net.model, self.discount_factor, self.double_dqn)
-        present_output_batch = self.q_net.model.predict(np.array(data[:,0].tolist()).squeeze())
+        present_output_batch = self.q_net.model.predict_on_batch(np.array(data[:,0].tolist()).squeeze())
         for i in range(data.shape[0]):
             present_output_batch[i,data[i][1]] = target[i]
 
@@ -285,10 +285,10 @@ def get_target_value_batch(data, policy, copy_policy, discount_factor, double_dq
     new_state = np.array(data[:,3].tolist()).squeeze()
 
     if double_dqn: # Double-DQN
-        best_action_idx = np.argmax(policy.predict(new_state), axis=1) ## Action selection using policy
-        best_action_q_value = copy_policy.predict(new_state)[np.arange(best_action_idx.shape[0]), best_action_idx]  ## Action evaluation using copy policy
+        best_action_idx = np.argmax(policy.predict_on_batch(new_state), axis=1) ## Action selection using policy
+        best_action_q_value = copy_policy.predict_on_batch(new_state)[np.arange(best_action_idx.shape[0]), best_action_idx]  ## Action evaluation using copy policy
     else: # DQN
-        best_action_q_value = np.max(copy_policy.predict(new_state), axis=1)  ## Action selection and evaluation using copy policy
+        best_action_q_value = np.max(copy_policy.predict_on_batch(new_state), axis=1)  ## Action selection and evaluation using copy policy
 
     target_batch = data[:,2] + (1-data[:,4])*discount_factor*best_action_q_value
 
