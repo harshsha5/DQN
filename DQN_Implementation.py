@@ -221,7 +221,7 @@ class DQN_Agent():
 
         present_output_batch = np.squeeze(np.array(present_output_batch))
         data_batch = np.array(data[:,0].tolist()).squeeze()
-        history = self.q_net.model.fit(data_batch,present_output_batch,self.num_epoch,verbose=0)
+        history = self.q_net.model.fit(data_batch, present_output_batch, batch_size=32, epochs=1, verbose=0)
         loss +=history.history['loss'][-1]
         acc +=history.history['accuracy'][-1]
 
