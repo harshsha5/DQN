@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+import os
+
 import keras, tensorflow as tf, numpy as np, gym, sys, copy, argparse
 import matplotlib.pyplot as plt 
 
@@ -191,12 +193,17 @@ class DQN_Agent():
             if(self.epsilon>self.epsilon_min):
                 self.epsilon*=self.epsilon_decay
             if((episode+1)%self.target_policy_update_frequency==0):
-                self.copy_q_net = copy.deepcopy(self.q_net)
+                # self.copy_q_net = copy.deepcopy(self.q_net)
+                self.copy_q_net.model.set_weights(self.q_net.model.get_weights())
                 # print("Updated target policy")
+
+            if episode % int(self.num_episodes/3) == 0:
+                test_video(self, self.environment_name, episode)
 
         self.q_net.save_model_weights(self.environment_name+"-weights") #Change name/pass as argument
         plot_graph(self.reward_episode_nums,self.reward_list,"reward")
         plot_graph(self.reward_episode_nums,self.td_error_list,"td_error")
+
 
     def train_batch(self, step):
         data = self.replay_mem.sample_batch()
@@ -284,33 +291,35 @@ def plot_graph(x,y,y_axis):
     elif(y_axis=="reward"):
          plt.ylabel('Average reward per episode')
          plt.title('Average reward VS No. of iterations') 
-    plt.show() 
-
+    plt.show()
 
 
 # Note: if you have problems creating video captures on servers without GUI,
-#       you could save and relaod model to create videos on your laptop. 
-# def test_video(agent, env, epi):
-#     # Usage: 
-#     #     you can pass the arguments within agent.train() as:
-#     #         if episode % int(self.num_episodes/3) == 0:
-#     #           test_video(self, self.environment_name, episode)
-#     save_path = "./videos-%s-%s" % (env, epi)
-#     if not os.pa th.exists(save_path):
-#         os.mkdir(save_path)
-#     # To create video
-#     env = gym.wrappers.Monitor(agent.env, save_path, force=True)
-#     reward_total = []
-#     state = env.reset()
-#     done = False
-#     while not done:
-#         env.render()
-#         action = agent.epsilon_greedy_policy(state, 0.05)
-#         next_state, reward, done, info = env.step(action)
-#         state = next_state
-#         reward_total.append(reward)
-#     print("reward_total: {}".format(np.sum(reward_total)))
-#     agent.env.close()
+#       you could save and relaod model to create videos on your laptop.
+def test_video(agent, env, epi):
+    # Usage:
+    #     you can pass the arguments within agent.train() as:
+    #         if episode % int(self.num_episodes/3) == 0:
+    #           test_video(self, self.environment_name, episode)
+    save_path = "./videos-%s-%s" % (env, epi)
+    if not os.path.exists(save_path):
+        os.mkdir(save_path)
+    # To create video
+    env = gym.wrappers.Monitor(agent.env, save_path, force=True)
+    reward_total = []
+    state = env.reset()
+    done = False
+    while not done:
+        state = transform_state(state, agent.env.observation_space.shape[0])
+        env.render()
+        action = np.argmax(agent.q_net.model.predict(state), axis=1)[0]
+        # action = agent.epsilon_greedy_policy(agent.q_net.model.predict(state))
+        # action = agent.epsilon_greedy_policy(state, 0.05)
+        next_state, reward, done, info = env.step(action)
+        state = next_state
+        reward_total.append(reward)
+    print("reward_total: {}".format(np.sum(reward_total)))
+    agent.env.close()
 
 
 def parse_arguments():
